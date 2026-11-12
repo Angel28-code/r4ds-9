@@ -87,7 +87,7 @@ top_fires <- big_fires |>
   )
 
 fire_map <- leaflet() |>
-  addTiles()
+  addProviderTiles(providers$Esri.WorldStreetMap)
 
 for (i in seq_len(nrow(top_fires))) {
   fire_map <- addPolygons(
