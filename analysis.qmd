@@ -1,0 +1,114 @@
+---
+title: "Wildfires"
+author: Angel Legrand
+format: html
+execute:
+  echo: false
+---
+
+```{r}
+#| message: false
+library(tidyverse)
+library(purrr)
+library(leaflet)
+library(jsonlite)
+```
+
+```{r}
+raw <- jsonlite::fromJSON("data/wildfires.geojson", simplifyVector = FALSE)
+cat("Number of features:", length(raw$features), "\n")
+```
+
+```{r}
+fire <- raw$features[[1]]
+names(fire)
+
+first_boundary_coordinate <- unlist(fire$geometry$coordinates[[1]][[1]])
+first_boundary_coordinate
+```
+
+```{r}
+wildfires <- tibble(features = raw$features) |>
+  unnest_wider(features) |>
+  unnest_wider(properties)
+
+wildfires
+```
+
+```{r}
+#| cache: true
+fires <- wildfires |>
+  unnest_wider(geometry, names_sep = "_") |>
+  select(incident, gis_acres, fire_year, agency, state, geometry_coordinates) |>
+  mutate(
+    gis_acres = as.numeric(gis_acres),
+    fire_year = as.integer(fire_year)
+  )
+```
+
+```{r}
+august_fires <- fires |>
+  filter(str_detect(incident, regex("\\bAugust\\b", ignore_case = TRUE)))
+
+nrow(august_fires)
+
+fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE) |>
+  select(incident, gis_acres, fire_year, agency, state)
+```
+
+```{r}
+big_fires <- fires |>
+  filter(gis_acres >= 100000) |>
+  mutate(
+    lon = map_dbl(
+      geometry_coordinates,
+      \(rings) mean(map_dbl(rings[[1]], \(coordinate) coordinate[[1]]))
+    ),
+    lat = map_dbl(
+      geometry_coordinates,
+      \(rings) mean(map_dbl(rings[[1]], \(coordinate) coordinate[[2]]))
+    )
+  )
+```
+
+```{r}
+top_fires <- big_fires |>
+  slice_max(gis_acres, n = 10, with_ties = FALSE) |>
+  mutate(
+    boundary_lng = map(
+      geometry_coordinates,
+      \(rings) map_dbl(rings[[1]], \(coordinate) coordinate[[1]])
+    ),
+    boundary_lat = map(
+      geometry_coordinates,
+      \(rings) map_dbl(rings[[1]], \(coordinate) coordinate[[2]])
+    )
+  )
+
+fire_map <- leaflet() |>
+  addTiles()
+
+for (i in seq_len(nrow(top_fires))) {
+  fire_map <- addPolygons(
+    fire_map,
+    lng = top_fires$boundary_lng[[i]],
+    lat = top_fires$boundary_lat[[i]],
+    popup = paste0(
+      top_fires$incident[[i]], " (",
+      top_fires$fire_year[[i]], "): ",
+      round(top_fires$gis_acres[[i]]), " acres"
+    ),
+    fillOpacity = 0.7
+  )
+}
+
+fitBounds(
+  fire_map,
+  lng1 = min(unlist(top_fires$boundary_lng)),
+  lat1 = min(unlist(top_fires$boundary_lat)),
+  lng2 = max(unlist(top_fires$boundary_lng)),
+  lat2 = max(unlist(top_fires$boundary_lat))
+)
+```
+
